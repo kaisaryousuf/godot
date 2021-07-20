@@ -64,7 +64,7 @@ void EditorQuickOpen::_build_search_cache(EditorFileSystemDirectory *p_efsd) {
 			// Store refs to used icons.
 			String ext = file.get_extension();
 			if (!icons.has(ext)) {
-				icons.insert(ext, get_theme_icon((has_theme_icon(file_type, "EditorIcons") ? file_type : "Object"), "EditorIcons"));
+				icons.insert(ext, get_theme_icon((has_theme_icon(file_type, SNAME("EditorIcons")) ? file_type : String("Object")), SNAME("EditorIcons")));
 			}
 		}
 	}
@@ -102,7 +102,7 @@ void EditorQuickOpen::_update_search() {
 			ti->set_icon(0, *icons.lookup_ptr(entries[i].path.get_extension()));
 		}
 
-		TreeItem *to_select = root->get_children();
+		TreeItem *to_select = root->get_first_child();
 		to_select->select(0);
 		to_select->set_as_cursor(0);
 		search_options->scroll_to_item(to_select);
@@ -140,7 +140,7 @@ void EditorQuickOpen::_confirmed() {
 		return;
 	}
 	_cleanup();
-	emit_signal("quick_open");
+	emit_signal(SNAME("quick_open"));
 	hide();
 }
 
@@ -170,7 +170,7 @@ void EditorQuickOpen::_sbox_input(const Ref<InputEvent> &p_ie) {
 
 				if (allow_multi_select) {
 					TreeItem *root = search_options->get_root();
-					if (!root->get_children()) {
+					if (!root->get_first_child()) {
 						break;
 					}
 
@@ -228,7 +228,7 @@ void EditorQuickOpen::_notification(int p_what) {
 }
 
 void EditorQuickOpen::_theme_changed() {
-	search_box->set_right_icon(search_options->get_theme_icon("Search", "EditorIcons"));
+	search_box->set_right_icon(search_options->get_theme_icon(SNAME("Search"), SNAME("EditorIcons")));
 }
 
 void EditorQuickOpen::_bind_methods() {

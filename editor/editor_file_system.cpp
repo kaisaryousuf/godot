@@ -31,10 +31,10 @@
 #include "editor_file_system.h"
 
 #include "core/config/project_settings.h"
+#include "core/io/file_access.h"
 #include "core/io/resource_importer.h"
 #include "core/io/resource_loader.h"
 #include "core/io/resource_saver.h"
-#include "core/os/file_access.h"
 #include "core/os/os.h"
 #include "core/variant/variant_parser.h"
 #include "editor_node.h"
@@ -66,6 +66,11 @@ int EditorFileSystemDirectory::find_dir_index(const String &p_dir) const {
 	}
 
 	return -1;
+}
+
+void EditorFileSystemDirectory::force_update() {
+	// We set modified_time to 0 to force `EditorFileSystem::_scan_fs_changes` to search changes in the directory
+	modified_time = 0;
 }
 
 int EditorFileSystemDirectory::get_subdir_count() const {
@@ -501,7 +506,7 @@ bool EditorFileSystem::_update_scan_actions() {
 			case ItemAction::ACTION_DIR_ADD: {
 				int idx = 0;
 				for (int i = 0; i < ia.dir->subdirs.size(); i++) {
-					if (ia.new_dir->name < ia.dir->subdirs[i]->name) {
+					if (ia.new_dir->name.naturalnocasecmp_to(ia.dir->subdirs[i]->name) < 0) {
 						break;
 					}
 					idx++;
@@ -523,7 +528,7 @@ bool EditorFileSystem::_update_scan_actions() {
 			case ItemAction::ACTION_FILE_ADD: {
 				int idx = 0;
 				for (int i = 0; i < ia.dir->files.size(); i++) {
-					if (ia.new_file->file < ia.dir->files[i]->file) {
+					if (ia.new_file->file.naturalnocasecmp_to(ia.dir->files[i]->file) < 0) {
 						break;
 					}
 					idx++;
@@ -587,7 +592,7 @@ bool EditorFileSystem::_update_scan_actions() {
 	}
 
 	if (reloads.size()) {
-		emit_signal("resources_reload", reloads);
+		emit_signal(SNAME("resources_reload"), reloads);
 	}
 	scan_actions.clear();
 
@@ -618,8 +623,8 @@ void EditorFileSystem::scan() {
 		new_filesystem = nullptr;
 		_update_scan_actions();
 		scanning = false;
-		emit_signal("filesystem_changed");
-		emit_signal("sources_changed", sources_changed.size() > 0);
+		emit_signal(SNAME("filesystem_changed"));
+		emit_signal(SNAME("sources_changed"), sources_changed.size() > 0);
 		_queue_update_script_classes();
 		first_scan = false;
 	} else {
@@ -708,7 +713,7 @@ void EditorFileSystem::_scan_new_dir(EditorFileSystemDirectory *p_dir, DirAccess
 
 				int idx2 = 0;
 				for (int i = 0; i < p_dir->subdirs.size(); i++) {
-					if (efd->name < p_dir->subdirs[i]->name) {
+					if (efd->name.naturalnocasecmp_to(p_dir->subdirs[i]->name) < 0) {
 						break;
 					}
 					idx2++;
@@ -854,9 +859,11 @@ void EditorFileSystem::_scan_fs_changes(EditorFileSystemDirectory *p_dir, const 
 
 		//then scan files and directories and check what's different
 
-		DirAccess *da = DirAccess::create(DirAccess::ACCESS_RESOURCES);
+		DirAccessRef da = DirAccess::create(DirAccess::ACCESS_RESOURCES);
 
-		da->change_dir(cd);
+		Error ret = da->change_dir(cd);
+		ERR_FAIL_COND_MSG(ret != OK, "Cannot change to '" + cd + "' folder.");
+
 		da->list_dir_begin();
 		while (true) {
 			String f = da->get_next();
@@ -944,7 +951,6 @@ void EditorFileSystem::_scan_fs_changes(EditorFileSystemDirectory *p_dir, const 
 		}
 
 		da->list_dir_end();
-		memdelete(da);
 	}
 
 	for (int i = 0; i < p_dir->files.size(); i++) {
@@ -1067,12 +1073,12 @@ void EditorFileSystem::scan_changes() {
 			scan_total = 0;
 			_scan_fs_changes(filesystem, sp);
 			if (_update_scan_actions()) {
-				emit_signal("filesystem_changed");
+				emit_signal(SNAME("filesystem_changed"));
 			}
 		}
 		scanning_changes = false;
 		scanning_changes_done = true;
-		emit_signal("sources_changed", sources_changed.size() > 0);
+		emit_signal(SNAME("sources_changed"), sources_changed.size() > 0);
 	} else {
 		ERR_FAIL_COND(thread_sources.is_started());
 		set_process(true);
@@ -1086,7 +1092,7 @@ void EditorFileSystem::scan_changes() {
 void EditorFileSystem::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
-			call_deferred("scan"); //this should happen after every editor node entered the tree
+			call_deferred(SNAME("scan")); //this should happen after every editor node entered the tree
 
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
@@ -1122,9 +1128,9 @@ void EditorFileSystem::_notification(int p_what) {
 
 						thread_sources.wait_to_finish();
 						if (_update_scan_actions()) {
-							emit_signal("filesystem_changed");
+							emit_signal(SNAME("filesystem_changed"));
 						}
-						emit_signal("sources_changed", sources_changed.size() > 0);
+						emit_signal(SNAME("sources_changed"), sources_changed.size() > 0);
 						_queue_update_script_classes();
 						first_scan = false;
 					}
@@ -1138,8 +1144,8 @@ void EditorFileSystem::_notification(int p_what) {
 					new_filesystem = nullptr;
 					thread.wait_to_finish();
 					_update_scan_actions();
-					emit_signal("filesystem_changed");
-					emit_signal("sources_changed", sources_changed.size() > 0);
+					emit_signal(SNAME("filesystem_changed"));
+					emit_signal(SNAME("sources_changed"), sources_changed.size() > 0);
 					_queue_update_script_classes();
 					first_scan = false;
 				}
@@ -1239,7 +1245,7 @@ bool EditorFileSystem::_find_file(const String &p_file, EditorFileSystemDirector
 
 			int idx2 = 0;
 			for (int j = 0; j < fs->get_subdir_count(); j++) {
-				if (efsd->name < fs->get_subdir(j)->get_name()) {
+				if (efsd->name.naturalnocasecmp_to(fs->get_subdir(j)->get_name()) < 0) {
 					break;
 				}
 				idx2++;
@@ -1439,7 +1445,7 @@ void EditorFileSystem::_queue_update_script_classes() {
 	}
 
 	update_script_classes_queued.set();
-	call_deferred("update_script_classes");
+	call_deferred(SNAME("update_script_classes"));
 }
 
 void EditorFileSystem::update_file(const String &p_file) {
@@ -1460,7 +1466,7 @@ void EditorFileSystem::update_file(const String &p_file) {
 			fs->files.remove(cpos);
 		}
 
-		call_deferred("emit_signal", "filesystem_changed"); //update later
+		call_deferred(SNAME("emit_signal"), "filesystem_changed"); //update later
 		_queue_update_script_classes();
 		return;
 	}
@@ -1469,13 +1475,11 @@ void EditorFileSystem::update_file(const String &p_file) {
 
 	if (cpos == -1) {
 		// The file did not exist, it was added.
-
-		late_added_files.insert(p_file); // Remember that it was added. This mean it will be scanned and imported on editor restart.
 		int idx = 0;
 		String file_name = p_file.get_file();
 
 		for (int i = 0; i < fs->files.size(); i++) {
-			if (file_name < fs->files[i]->file) {
+			if (p_file.naturalnocasecmp_to(fs->files[i]->file) < 0) {
 				break;
 			}
 			idx++;
@@ -1509,7 +1513,7 @@ void EditorFileSystem::update_file(const String &p_file) {
 	// Update preview
 	EditorResourcePreview::get_singleton()->check_for_invalidation(p_file);
 
-	call_deferred("emit_signal", "filesystem_changed"); //update later
+	call_deferred(SNAME("emit_signal"), "filesystem_changed"); //update later
 	_queue_update_script_classes();
 }
 
@@ -1520,7 +1524,7 @@ Error EditorFileSystem::_reimport_group(const String &p_group_file, const Vector
 	Map<String, String> base_paths;
 	for (int i = 0; i < p_files.size(); i++) {
 		Ref<ConfigFile> config;
-		config.instance();
+		config.instantiate();
 		Error err = config->load(p_files[i] + ".import");
 		ERR_CONTINUE(err != OK);
 		ERR_CONTINUE(!config->has_section_key("remap", "importer"));
@@ -1702,7 +1706,7 @@ void EditorFileSystem::_reimport_file(const String &p_file, const Map<StringName
 		//use existing
 		if (p_custom_options == nullptr) {
 			Ref<ConfigFile> cf;
-			cf.instance();
+			cf.instantiate();
 			Error err = cf->load(p_file + ".import");
 			if (err == OK) {
 				if (cf->has_section("params")) {
@@ -1717,9 +1721,6 @@ void EditorFileSystem::_reimport_file(const String &p_file, const Map<StringName
 				}
 			}
 		}
-
-	} else {
-		late_added_files.insert(p_file); //imported files do not call update_file(), but just in case..
 	}
 
 	if (importer_name == "keep") {
@@ -1928,19 +1929,6 @@ void EditorFileSystem::_reimport_thread(uint32_t p_index, ImportThreadData *p_im
 }
 
 void EditorFileSystem::reimport_files(const Vector<String> &p_files) {
-	{
-		// Ensure that ProjectSettings::IMPORTED_FILES_PATH exists.
-		DirAccess *da = DirAccess::open("res://");
-		if (da->change_dir(ProjectSettings::IMPORTED_FILES_PATH) != OK) {
-			Error err = da->make_dir_recursive(ProjectSettings::IMPORTED_FILES_PATH);
-			if (err || da->change_dir(ProjectSettings::IMPORTED_FILES_PATH) != OK) {
-				memdelete(da);
-				ERR_FAIL_MSG("Failed to create '" + ProjectSettings::IMPORTED_FILES_PATH + "' folder.");
-			}
-		}
-		memdelete(da);
-	}
-
 	importing = true;
 	EditorProgress pr("reimport", TTR("(Re)Importing Assets"), p_files.size());
 
@@ -2038,10 +2026,10 @@ void EditorFileSystem::reimport_files(const Vector<String> &p_files) {
 	_save_filesystem_cache();
 	importing = false;
 	if (!is_scanning()) {
-		emit_signal("filesystem_changed");
+		emit_signal(SNAME("filesystem_changed"));
 	}
 
-	emit_signal("resources_reimported", p_files);
+	emit_signal(SNAME("resources_reimported"), p_files);
 }
 
 Error EditorFileSystem::_resource_import(const String &p_path) {
@@ -2080,7 +2068,7 @@ void EditorFileSystem::_move_group_files(EditorFileSystemDirectory *efd, const S
 			files[i]->import_group_file = p_new_location;
 
 			Ref<ConfigFile> config;
-			config.instance();
+			config.instantiate();
 			String path = efd->get_file_path(i) + ".import";
 			Error err = config->load(path);
 			if (err != OK) {
@@ -2171,13 +2159,9 @@ EditorFileSystem::EditorFileSystem() {
 	scanning_changes = false;
 	scanning_changes_done = false;
 
-	DirAccess *da = DirAccess::create(DirAccess::ACCESS_RESOURCES);
-	if (da->change_dir(ProjectSettings::IMPORTED_FILES_PATH) != OK) {
-		da->make_dir(ProjectSettings::IMPORTED_FILES_PATH);
-	}
 	// This should probably also work on Unix and use the string it returns for FAT32 or exFAT
+	DirAccessRef da = DirAccess::create(DirAccess::ACCESS_RESOURCES);
 	using_fat32_or_exfat = (da->get_filesystem_type() == "FAT32" || da->get_filesystem_type() == "exFAT");
-	memdelete(da);
 
 	scan_total = 0;
 	update_script_classes_queued.clear();

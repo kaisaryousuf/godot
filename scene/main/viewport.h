@@ -32,6 +32,7 @@
 #define VIEWPORT_H
 
 #include "core/math/transform_2d.h"
+#include "core/templates/pair.h"
 #include "scene/main/node.h"
 #include "scene/resources/texture.h"
 #include "scene/resources/world_2d.h"
@@ -115,12 +116,15 @@ public:
 
 	enum RenderInfo {
 		RENDER_INFO_OBJECTS_IN_FRAME,
-		RENDER_INFO_VERTICES_IN_FRAME,
-		RENDER_INFO_MATERIAL_CHANGES_IN_FRAME,
-		RENDER_INFO_SHADER_CHANGES_IN_FRAME,
-		RENDER_INFO_SURFACE_CHANGES_IN_FRAME,
+		RENDER_INFO_PRIMITIVES_IN_FRAME,
 		RENDER_INFO_DRAW_CALLS_IN_FRAME,
 		RENDER_INFO_MAX
+	};
+
+	enum RenderInfoType {
+		RENDER_INFO_TYPE_VISIBLE,
+		RENDER_INFO_TYPE_SHADOW,
+		RENDER_INFO_TYPE_MAX
 	};
 
 	enum DebugDraw {
@@ -130,9 +134,9 @@ public:
 		DEBUG_DRAW_OVERDRAW,
 		DEBUG_DRAW_WIREFRAME,
 		DEBUG_DRAW_NORMAL_BUFFER,
-		DEBUG_DRAW_GI_PROBE_ALBEDO,
-		DEBUG_DRAW_GI_PROBE_LIGHTING,
-		DEBUG_DRAW_GI_PROBE_EMISSION,
+		DEBUG_DRAW_VOXEL_GI_ALBEDO,
+		DEBUG_DRAW_VOXEL_GI_LIGHTING,
+		DEBUG_DRAW_VOXEL_GI_EMISSION,
 		DEBUG_DRAW_SHADOW_ATLAS,
 		DEBUG_DRAW_DIRECTIONAL_SHADOW_ATLAS,
 		DEBUG_DRAW_SCENE_LUMINANCE,
@@ -147,6 +151,7 @@ public:
 		DEBUG_DRAW_CLUSTER_SPOT_LIGHTS,
 		DEBUG_DRAW_CLUSTER_DECALS,
 		DEBUG_DRAW_CLUSTER_REFLECTION_PROBES,
+		DEBUG_DRAW_OCCLUDERS,
 	};
 
 	enum DefaultCanvasItemTextureFilter {
@@ -192,7 +197,7 @@ private:
 	Set<Listener3D *> listeners;
 
 	struct CameraOverrideData {
-		Transform transform;
+		Transform3D transform;
 		enum Projection {
 			PROJECTION_PERSPECTIVE,
 			PROJECTION_ORTHOGONAL
@@ -209,7 +214,8 @@ private:
 		}
 	} camera_override;
 
-	Camera3D *camera = nullptr;
+	Camera3D *camera_3d = nullptr;
+	Camera2D *camera_2d = nullptr;
 	Set<Camera3D *> cameras;
 	Set<CanvasLayer *> canvas_layers;
 
@@ -230,9 +236,10 @@ private:
 	Transform2D global_canvas_transform;
 	Transform2D stretch_transform;
 
-	Size2i size;
+	Size2i size = Size2i(512, 512);
 	Size2i size_2d_override;
 	bool size_allocated = false;
+	bool use_xr = false;
 
 	RID contact_2d_debug;
 	RID contact_3d_debug_multimesh;
@@ -252,8 +259,8 @@ private:
 	List<Ref<InputEvent>> physics_picking_events;
 	ObjectID physics_object_capture;
 	ObjectID physics_object_over;
-	Transform physics_last_object_transform;
-	Transform physics_last_camera_transform;
+	Transform3D physics_last_object_transform;
+	Transform3D physics_last_camera_transform;
 	ObjectID physics_last_id;
 	bool physics_has_last_mousepos = false;
 	Vector2 physics_last_mousepos = Vector2(Math_INF, Math_INF);
@@ -271,7 +278,12 @@ private:
 	bool handle_input_locally = true;
 	bool local_input_handled = false;
 
+	// Collider to frame
 	Map<ObjectID, uint64_t> physics_2d_mouseover;
+	// Collider & shape to frame
+	Map<Pair<ObjectID, int>, uint64_t, PairSort<ObjectID, int>> physics_2d_shape_mouseover;
+	// Cleans up colliders corresponding to old frames or all of them.
+	void _cleanup_mouseover_colliders(bool p_clean_all_frames, bool p_paused_only, uint64_t p_frame_reference = 0);
 
 	Ref<World2D> world_2d;
 	Ref<World3D> world_3d;
@@ -285,6 +297,8 @@ private:
 
 	void _update_listener();
 	void _update_listener_2d();
+
+	bool disable_3d = false;
 
 	void _propagate_enter_world(Node *p_node);
 	void _propagate_exit_world(Node *p_node);
@@ -304,6 +318,7 @@ private:
 	ScreenSpaceAA screen_space_aa = SCREEN_SPACE_AA_DISABLED;
 	bool use_debanding = false;
 	float lod_threshold = 1.0;
+	bool use_occlusion_culling = false;
 
 	Ref<ViewportTexture> default_texture;
 	Set<ViewportTexture *> viewport_textures;
@@ -394,8 +409,6 @@ private:
 
 	void _gui_input_event(Ref<InputEvent> p_event);
 
-	void update_worlds();
-
 	_FORCE_INLINE_ Transform2D _get_input_pre_xform() const;
 
 	Ref<InputEvent> _make_input_local(const Ref<InputEvent> &ev);
@@ -438,11 +451,14 @@ private:
 	void _listener_make_next_current(Listener3D *p_exclude);
 
 	friend class Camera3D;
-	void _camera_transform_changed_notify();
-	void _camera_set(Camera3D *p_camera);
-	bool _camera_add(Camera3D *p_camera); //true if first
-	void _camera_remove(Camera3D *p_camera);
-	void _camera_make_next_current(Camera3D *p_exclude);
+	void _camera_3d_transform_changed_notify();
+	void _camera_3d_set(Camera3D *p_camera);
+	bool _camera_3d_add(Camera3D *p_camera); //true if first
+	void _camera_3d_remove(Camera3D *p_camera);
+	void _camera_3d_make_next_current(Camera3D *p_exclude);
+
+	friend class Camera2D;
+	void _camera_2d_set(Camera2D *p_camera_2d);
 
 	friend class CanvasLayer;
 	void _canvas_layer_add(CanvasLayer *p_canvas_layer);
@@ -480,19 +496,19 @@ protected:
 	void _notification(int p_what);
 	void _process_picking();
 	static void _bind_methods();
-	virtual void _validate_property(PropertyInfo &property) const override;
 
 public:
 	uint64_t get_processed_events_count() const { return event_count; }
 
 	Listener3D *get_listener() const;
-	Camera3D *get_camera() const;
+	Camera3D *get_camera_3d() const;
+	Camera2D *get_camera_2d() const;
 
 	void enable_camera_override(bool p_enable);
 	bool is_camera_override_enabled() const;
 
-	void set_camera_override_transform(const Transform &p_transform);
-	Transform get_camera_override_transform() const;
+	void set_camera_override_transform(const Transform3D &p_transform);
+	Transform3D get_camera_override_transform() const;
 
 	void set_camera_override_perspective(float p_fovy_degrees, float p_z_near, float p_z_far);
 	void set_camera_override_orthogonal(float p_size, float p_z_near, float p_z_far);
@@ -502,6 +518,9 @@ public:
 
 	void set_as_audio_listener_2d(bool p_enable);
 	bool is_audio_listener_2d() const;
+
+	void set_disable_3d(bool p_disable);
+	bool is_3d_disabled() const;
 
 	void update_canvas_items();
 
@@ -533,6 +552,9 @@ public:
 	void set_transparent_background(bool p_enable);
 	bool has_transparent_background() const;
 
+	void set_use_xr(bool p_use_xr);
+	bool is_using_xr();
+
 	Ref<ViewportTexture> get_texture() const;
 
 	void set_shadow_atlas_size(int p_size);
@@ -555,6 +577,9 @@ public:
 
 	void set_lod_threshold(float p_pixels);
 	float get_lod_threshold() const;
+
+	void set_use_occlusion_culling(bool p_us_occlusion_culling);
+	bool is_using_occlusion_culling() const;
 
 	Vector2 get_camera_coords(const Vector2 &p_viewport_coords) const;
 	Vector2 get_camera_rect_size() const;
@@ -585,7 +610,7 @@ public:
 	void set_debug_draw(DebugDraw p_debug_draw);
 	DebugDraw get_debug_draw() const;
 
-	int get_render_info(RenderInfo p_info);
+	int get_render_info(RenderInfoType p_type, RenderInfo p_info);
 
 	void set_snap_controls_to_pixels(bool p_enable);
 	bool is_snap_controls_to_pixels_enabled() const;
@@ -652,7 +677,6 @@ public:
 private:
 	UpdateMode update_mode = UPDATE_WHEN_VISIBLE;
 	ClearMode clear_mode = CLEAR_MODE_ALWAYS;
-	bool xr = false;
 	bool size_2d_override_stretch = false;
 
 protected:
@@ -667,9 +691,6 @@ public:
 
 	void set_size_2d_override(const Size2i &p_size);
 	Size2i get_size_2d_override() const;
-
-	void set_use_xr(bool p_use_xr);
-	bool is_using_xr();
 
 	void set_size_2d_override_stretch(bool p_enable);
 	bool is_size_2d_override_stretch_enabled() const;
@@ -692,6 +713,7 @@ VARIANT_ENUM_CAST(Viewport::SDFScale);
 VARIANT_ENUM_CAST(Viewport::SDFOversize);
 VARIANT_ENUM_CAST(SubViewport::ClearMode);
 VARIANT_ENUM_CAST(Viewport::RenderInfo);
+VARIANT_ENUM_CAST(Viewport::RenderInfoType);
 VARIANT_ENUM_CAST(Viewport::DefaultCanvasItemTextureFilter);
 VARIANT_ENUM_CAST(Viewport::DefaultCanvasItemTextureRepeat);
 

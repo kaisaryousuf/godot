@@ -43,7 +43,7 @@ class SceneTreeEditor : public Control {
 
 	EditorSelection *editor_selection;
 
-	enum {
+	enum SceneTreeEditorButton {
 		BUTTON_SUBSCENE = 0,
 		BUTTON_VISIBILITY = 1,
 		BUTTON_SCRIPT = 2,
@@ -81,7 +81,6 @@ class SceneTreeEditor : public Control {
 
 	TreeItem *_find(TreeItem *p_node, const NodePath &p_path);
 	void _notification(int p_what);
-	void _selected_changed();
 	void _deselect_items();
 	void _rename_node(ObjectID p_node, const String &p_name);
 
@@ -133,6 +132,8 @@ class SceneTreeEditor : public Control {
 
 	Vector<StringName> valid_types;
 
+	void _emit_node_selected();
+
 public:
 	void set_filter(const String &p_filter);
 	String get_filter() const;
@@ -156,6 +157,8 @@ public:
 	void set_connecting_signal(bool p_enable);
 
 	Tree *get_scene_tree() { return tree; }
+
+	void update_warning();
 
 	SceneTreeEditor(bool p_label = true, bool p_can_rename = false, bool p_can_open_instance = false);
 	~SceneTreeEditor();
